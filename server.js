@@ -14,6 +14,16 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Tangani body JSON yang tidak valid tanpa membocorkan stack trace
+app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      message: "Body permintaan harus berupa JSON yang valid",
+    });
+  }
+  next(err);
+});
+
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -72,7 +82,7 @@ app.get("/", (req, res) => {
 // REGISTER: semua pendaftar menjadi customer
 app.post("/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password } = req.body ?? {};
 
     if (
       typeof name !== "string" ||
@@ -125,7 +135,7 @@ app.post("/register", async (req, res) => {
 // LOGIN
 app.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body ?? {};
 
     if (
       typeof email !== "string" ||
