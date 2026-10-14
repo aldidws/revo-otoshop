@@ -214,6 +214,68 @@ app.get("/admin", authenticate, adminOnly, (req, res) => {
   res.json({ message: "Selamat datang, Admin!" });
 });
 
+// DASHBOARD: ringkasan untuk admin (tujuan redirect saat login admin)
+app.get("/dashboard", authenticate, adminOnly, async (req, res) => {
+  try {
+    const [
+      userCount,
+      categoryCount,
+      productCount,
+      orderStats,
+      ordersByStatus,
+      recentOrders,
+      lowStock,
+    ] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM users`),
+      pool.query(`SELECT COUNT(*)::int AS total FROM categories`),
+      pool.query(`SELECT COUNT(*)::int AS total FROM products`),
+      pool.query(
+        `SELECT COUNT(*)::int AS total_orders,
+                COALESCE(SUM(total), 0) AS total_revenue
+         FROM orders
+         WHERE status <> 'cancelled'`
+      ),
+      pool.query(
+        `SELECT status, COUNT(*)::int AS total
+         FROM orders
+         GROUP BY status
+         ORDER BY status ASC`
+      ),
+      pool.query(
+        `SELECT id, order_number, user_id, status, total, created_at
+         FROM orders
+         ORDER BY created_at DESC
+         LIMIT 5`
+      ),
+      pool.query(
+        `SELECT id, sku, name, stock
+         FROM products
+         WHERE is_active = true AND stock <= 5
+         ORDER BY stock ASC
+         LIMIT 10`
+      ),
+    ]);
+
+    res.json({
+      message: "Selamat datang di dashboard admin",
+      admin: { id: req.user.id, role: req.user.role },
+      summary: {
+        users: userCount.rows[0].total,
+        categories: categoryCount.rows[0].total,
+        products: productCount.rows[0].total,
+        orders: orderStats.rows[0].total_orders,
+        revenue: orderStats.rows[0].total_revenue,
+      },
+      orders_by_status: ordersByStatus.rows,
+      recent_orders: recentOrders.rows,
+      low_stock_products: lowStock.rows,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+  }
+});
+
 // Membuat slug dari nama (contoh: "Oli Mesin" -> "oli-mesin")
 function slugify(text) {
   return text
