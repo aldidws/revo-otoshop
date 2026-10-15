@@ -82,7 +82,10 @@ app.get("/", (req, res) => {
 // REGISTER: every new sign-up becomes a customer
 app.post("/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body ?? {};
+    const body = req.body ?? {};
+    const { name, email, password } = body;
+    // Accept either snake_case or camelCase from the client
+    const confirmPassword = body.confirm_password ?? body.confirmPassword;
 
     if (
       typeof name !== "string" ||
@@ -97,6 +100,12 @@ app.post("/register", async (req, res) => {
     ) {
       return res.status(400).json({
         message: "Invalid data. Password must be 8-72 bytes.",
+      });
+    }
+
+    if (typeof confirmPassword !== "string" || confirmPassword !== password) {
+      return res.status(400).json({
+        message: "Password confirmation does not match",
       });
     }
 
@@ -212,6 +221,68 @@ app.get("/me", authenticate, async (req, res) => {
 // Admin-only endpoint
 app.get("/admin", authenticate, adminOnly, (req, res) => {
   res.json({ message: "Welcome, Admin!" });
+});
+
+// Admin dashboard summary (admin only)
+app.get("/admin/dashboard", authenticate, adminOnly, async (req, res) => {
+  try {
+    const [
+      userCount,
+      categoryCount,
+      productCount,
+      orderStats,
+      ordersByStatus,
+      recentOrders,
+      lowStock,
+    ] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM users`),
+      pool.query(`SELECT COUNT(*)::int AS total FROM categories`),
+      pool.query(`SELECT COUNT(*)::int AS total FROM products`),
+      pool.query(
+        `SELECT COUNT(*)::int AS total_orders,
+                COALESCE(SUM(total), 0) AS total_revenue
+         FROM orders
+         WHERE status <> 'cancelled'`
+      ),
+      pool.query(
+        `SELECT status, COUNT(*)::int AS total
+         FROM orders
+         GROUP BY status
+         ORDER BY status ASC`
+      ),
+      pool.query(
+        `SELECT id, order_number, user_id, status, total, created_at
+         FROM orders
+         ORDER BY created_at DESC
+         LIMIT 5`
+      ),
+      pool.query(
+        `SELECT id, sku, name, stock
+         FROM products
+         WHERE is_active = true AND stock <= 5
+         ORDER BY stock ASC
+         LIMIT 10`
+      ),
+    ]);
+
+    res.json({
+      message: "Welcome to the admin dashboard",
+      admin: { id: req.user.id, role: req.user.role },
+      summary: {
+        users: userCount.rows[0].total,
+        categories: categoryCount.rows[0].total,
+        products: productCount.rows[0].total,
+        orders: orderStats.rows[0].total_orders,
+        revenue: orderStats.rows[0].total_revenue,
+      },
+      orders_by_status: ordersByStatus.rows,
+      recent_orders: recentOrders.rows,
+      low_stock_products: lowStock.rows,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "A server error occurred" });
+  }
 });
 
 // DASHBOARD: admin summary (redirect target when an admin logs in)
