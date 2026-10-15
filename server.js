@@ -14,11 +14,11 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Tangani body JSON yang tidak valid tanpa membocorkan stack trace
+// Handle invalid JSON bodies without leaking a stack trace
 app.use((err, req, res, next) => {
   if (err.type === "entity.parse.failed") {
     return res.status(400).json({
-      message: "Body permintaan harus berupa JSON yang valid",
+      message: "Request body must be valid JSON",
     });
   }
   next(err);
@@ -28,10 +28,10 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET || !process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL dan JWT_SECRET wajib diisi");
+  throw new Error("DATABASE_URL and JWT_SECRET are required");
 }
 
-// Membuat token autentikasi
+// Create an authentication token
 function createToken(user) {
   return jwt.sign(
     { id: user.id, role: user.role },
@@ -40,7 +40,7 @@ function createToken(user) {
   );
 }
 
-// Middleware untuk memeriksa token
+// Middleware to verify the token
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ")
@@ -49,7 +49,7 @@ function authenticate(req, res, next) {
 
   if (!token) {
     return res.status(401).json({
-      message: "Silakan login terlebih dahulu",
+      message: "Please log in first",
     });
   }
 
@@ -58,28 +58,28 @@ function authenticate(req, res, next) {
     next();
   } catch {
     return res.status(401).json({
-      message: "Token tidak valid atau kedaluwarsa",
+      message: "Invalid or expired token",
     });
   }
 }
 
-// Middleware khusus admin
+// Admin-only middleware
 function adminOnly(req, res, next) {
   if (req.user.role !== "admin") {
     return res.status(403).json({
-      message: "Akses khusus admin",
+      message: "Admin access only",
     });
   }
 
   next();
 }
 
-// Halaman dasar API
+// API base endpoint
 app.get("/", (req, res) => {
-  res.json({ message: "Auth API berjalan" });
+  res.json({ message: "Auth API is running" });
 });
 
-// REGISTER: semua pendaftar menjadi customer
+// REGISTER: every new sign-up becomes a customer
 app.post("/register", async (req, res) => {
   try {
     const { name, email, password } = req.body ?? {};
@@ -96,7 +96,7 @@ app.post("/register", async (req, res) => {
       Buffer.byteLength(password, "utf8") > 72
     ) {
       return res.status(400).json({
-        message: "Data tidak valid. Password harus 8-72 byte.",
+        message: "Invalid data. Password must be 8-72 bytes.",
       });
     }
 
@@ -113,7 +113,7 @@ app.post("/register", async (req, res) => {
     const user = result.rows[0];
 
     return res.status(201).json({
-      message: "Registrasi berhasil",
+      message: "Registration successful",
       user,
       token: createToken(user),
       redirect: "/",
@@ -121,13 +121,13 @@ app.post("/register", async (req, res) => {
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({
-        message: "Email sudah terdaftar",
+        message: "Email is already registered",
       });
     }
 
     console.error(error);
     return res.status(500).json({
-      message: "Terjadi kesalahan pada server",
+      message: "A server error occurred",
     });
   }
 });
@@ -144,7 +144,7 @@ app.post("/login", async (req, res) => {
       Buffer.byteLength(password, "utf8") > 72
     ) {
       return res.status(400).json({
-        message: "Email atau password tidak valid",
+        message: "Invalid email or password",
       });
     }
 
@@ -161,7 +161,7 @@ app.post("/login", async (req, res) => {
       !(await bcrypt.compare(password, user.password))
     ) {
       return res.status(401).json({
-        message: "Email atau password salah",
+        message: "Incorrect email or password",
       });
     }
 
@@ -173,7 +173,7 @@ app.post("/login", async (req, res) => {
     };
 
     return res.json({
-      message: "Login berhasil",
+      message: "Login successful",
       user: safeUser,
       token: createToken(safeUser),
       redirect:
@@ -182,12 +182,12 @@ app.post("/login", async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({
-      message: "Terjadi kesalahan pada server",
+      message: "A server error occurred",
     });
   }
 });
 
-// Identitas pengguna yang sedang login
+// Identity of the currently logged-in user
 app.get("/me", authenticate, async (req, res) => {
   try {
     const result = await pool.query(
@@ -198,23 +198,23 @@ app.get("/me", authenticate, async (req, res) => {
 
     if (!result.rowCount) {
       return res.status(401).json({
-        message: "Akun tidak ditemukan",
+        message: "Account not found",
       });
     }
 
     res.json({ user: result.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Kesalahan server" });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// Endpoint yang hanya boleh diakses admin
+// Admin-only endpoint
 app.get("/admin", authenticate, adminOnly, (req, res) => {
-  res.json({ message: "Selamat datang, Admin!" });
+  res.json({ message: "Welcome, Admin!" });
 });
 
-// DASHBOARD: ringkasan untuk admin (tujuan redirect saat login admin)
+// DASHBOARD: admin summary (redirect target when an admin logs in)
 app.get("/dashboard", authenticate, adminOnly, async (req, res) => {
   try {
     const [
@@ -257,7 +257,7 @@ app.get("/dashboard", authenticate, adminOnly, async (req, res) => {
     ]);
 
     res.json({
-      message: "Selamat datang di dashboard admin",
+      message: "Welcome to the admin dashboard",
       admin: { id: req.user.id, role: req.user.role },
       summary: {
         users: userCount.rows[0].total,
@@ -272,11 +272,11 @@ app.get("/dashboard", authenticate, adminOnly, async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Membuat slug dari nama (contoh: "Oli Mesin" -> "oli-mesin")
+// Build a slug from a name (e.g. "Engine Oil" -> "engine-oil")
 function slugify(text) {
   return text
     .toString()
@@ -290,7 +290,7 @@ function slugify(text) {
 
 /* ======================= CATEGORIES ======================= */
 
-// Daftar kategori (publik). Default hanya yang aktif; admin bisa ?all=true
+// List categories (public). Defaults to active only; admin can use ?all=true
 app.get("/categories", async (req, res) => {
   try {
     const showAll = req.query.all === "true";
@@ -303,16 +303,16 @@ app.get("/categories", async (req, res) => {
     res.json({ categories: result.rows });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Detail kategori (publik)
+// Category detail (public)
 app.get("/categories/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const result = await pool.query(
@@ -322,34 +322,34 @@ app.get("/categories/:id", async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Kategori tidak ditemukan" });
+      return res.status(404).json({ message: "Category not found" });
     }
 
     res.json({ category: result.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Validasi payload kategori
+// Validate category payload
 function validateCategory(body) {
   const { name, slug, description, image_url, is_active } = body ?? {};
 
   if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
-    return { error: "Nama kategori tidak valid" };
+    return { error: "Invalid category name" };
   }
   if (slug !== undefined && (typeof slug !== "string" || slug.length > 120)) {
-    return { error: "Slug tidak valid" };
+    return { error: "Invalid slug" };
   }
   if (description !== undefined && description !== null && typeof description !== "string") {
-    return { error: "Deskripsi tidak valid" };
+    return { error: "Invalid description" };
   }
   if (image_url !== undefined && image_url !== null && typeof image_url !== "string") {
-    return { error: "image_url tidak valid" };
+    return { error: "Invalid image_url" };
   }
   if (is_active !== undefined && typeof is_active !== "boolean") {
-    return { error: "is_active harus boolean" };
+    return { error: "is_active must be a boolean" };
   }
 
   const finalName = name.trim();
@@ -364,7 +364,7 @@ function validateCategory(body) {
   };
 }
 
-// Buat kategori (admin)
+// Create category (admin)
 app.post("/categories", authenticate, adminOnly, async (req, res) => {
   try {
     const { error, value } = validateCategory(req.body);
@@ -378,24 +378,24 @@ app.post("/categories", authenticate, adminOnly, async (req, res) => {
     );
 
     res.status(201).json({
-      message: "Kategori dibuat",
+      message: "Category created",
       category: result.rows[0],
     });
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ message: "Nama atau slug kategori sudah ada" });
+      return res.status(409).json({ message: "Category name or slug already exists" });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Perbarui kategori (admin)
+// Update category (admin)
 app.put("/categories/:id", authenticate, adminOnly, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const { error, value } = validateCategory(req.body);
@@ -410,25 +410,25 @@ app.put("/categories/:id", authenticate, adminOnly, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Kategori tidak ditemukan" });
+      return res.status(404).json({ message: "Category not found" });
     }
 
-    res.json({ message: "Kategori diperbarui", category: result.rows[0] });
+    res.json({ message: "Category updated", category: result.rows[0] });
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ message: "Nama atau slug kategori sudah ada" });
+      return res.status(409).json({ message: "Category name or slug already exists" });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Hapus kategori (admin)
+// Delete category (admin)
 app.delete("/categories/:id", authenticate, adminOnly, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const result = await pool.query(
@@ -437,30 +437,30 @@ app.delete("/categories/:id", authenticate, adminOnly, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Kategori tidak ditemukan" });
+      return res.status(404).json({ message: "Category not found" });
     }
 
-    res.json({ message: "Kategori dihapus" });
+    res.json({ message: "Category deleted" });
   } catch (error) {
     if (error.code === "23503") {
       return res.status(409).json({
-        message: "Kategori masih dipakai produk, tidak bisa dihapus",
+        message: "Category is still used by products and cannot be deleted",
       });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
 /* ======================= PRODUCTS ======================= */
 
-// Daftar produk (publik). Filter: ?category_id= ?q= ?featured=true ?all=true
+// List products (public). Filters: ?category_id= ?q= ?featured=true ?all=true
 app.get("/products", async (req, res) => {
   try {
     const conditions = [];
     const params = [];
 
-    // Secara default hanya tampilkan produk aktif
+    // Show only active products by default
     if (req.query.all !== "true") {
       conditions.push(`p.is_active = true`);
     }
@@ -468,7 +468,7 @@ app.get("/products", async (req, res) => {
     if (req.query.category_id !== undefined) {
       const categoryId = Number(req.query.category_id);
       if (!Number.isInteger(categoryId) || categoryId < 1) {
-        return res.status(400).json({ message: "category_id tidak valid" });
+        return res.status(400).json({ message: "Invalid category_id" });
       }
       params.push(categoryId);
       conditions.push(`p.category_id = $${params.length}`);
@@ -502,16 +502,16 @@ app.get("/products", async (req, res) => {
     res.json({ products: result.rows });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Detail produk (publik)
+// Product detail (public)
 app.get("/products/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const result = await pool.query(
@@ -526,17 +526,17 @@ app.get("/products/:id", async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Produk tidak ditemukan" });
+      return res.status(404).json({ message: "Product not found" });
     }
 
     res.json({ product: result.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Validasi payload produk
+// Validate product payload
 function validateProduct(body) {
   const {
     sku, name, brand, description, price, stock,
@@ -544,38 +544,38 @@ function validateProduct(body) {
   } = body ?? {};
 
   if (typeof sku !== "string" || !sku.trim() || sku.trim().length > 100) {
-    return { error: "SKU tidak valid" };
+    return { error: "Invalid SKU" };
   }
   if (typeof name !== "string" || !name.trim() || name.trim().length > 150) {
-    return { error: "Nama produk tidak valid" };
+    return { error: "Invalid product name" };
   }
   if (typeof brand !== "string" || !brand.trim() || brand.trim().length > 100) {
-    return { error: "Brand tidak valid" };
+    return { error: "Invalid brand" };
   }
   if (description !== undefined && description !== null && typeof description !== "string") {
-    return { error: "Deskripsi tidak valid" };
+    return { error: "Invalid description" };
   }
   if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {
-    return { error: "Harga tidak valid" };
+    return { error: "Invalid price" };
   }
   if (stock !== undefined && (!Number.isInteger(stock) || stock < 0)) {
-    return { error: "Stok tidak valid" };
+    return { error: "Invalid stock" };
   }
   if (image_url !== undefined && image_url !== null && typeof image_url !== "string") {
-    return { error: "image_url tidak valid" };
+    return { error: "Invalid image_url" };
   }
   if (is_featured !== undefined && typeof is_featured !== "boolean") {
-    return { error: "is_featured harus boolean" };
+    return { error: "is_featured must be a boolean" };
   }
   if (is_active !== undefined && typeof is_active !== "boolean") {
-    return { error: "is_active harus boolean" };
+    return { error: "is_active must be a boolean" };
   }
-  // category_id boleh berupa number atau numeric-string (id DB bertipe bigint)
+  // category_id may be a number or a numeric string (DB id is bigint)
   let categoryId = null;
   if (category_id !== undefined && category_id !== null && category_id !== "") {
     categoryId = Number(category_id);
     if (!Number.isInteger(categoryId) || categoryId < 1) {
-      return { error: "category_id tidak valid" };
+      return { error: "Invalid category_id" };
     }
   }
 
@@ -595,7 +595,7 @@ function validateProduct(body) {
   };
 }
 
-// Buat produk (admin)
+// Create product (admin)
 app.post("/products", authenticate, adminOnly, async (req, res) => {
   try {
     const { error, value } = validateProduct(req.body);
@@ -616,25 +616,25 @@ app.post("/products", authenticate, adminOnly, async (req, res) => {
       ]
     );
 
-    res.status(201).json({ message: "Produk dibuat", product: result.rows[0] });
+    res.status(201).json({ message: "Product created", product: result.rows[0] });
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ message: "SKU produk sudah ada" });
+      return res.status(409).json({ message: "Product SKU already exists" });
     }
     if (error.code === "23503") {
-      return res.status(400).json({ message: "Kategori tidak ditemukan" });
+      return res.status(400).json({ message: "Category not found" });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Perbarui produk (admin)
+// Update product (admin)
 app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const { error, value } = validateProduct(req.body);
@@ -657,28 +657,28 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Produk tidak ditemukan" });
+      return res.status(404).json({ message: "Product not found" });
     }
 
-    res.json({ message: "Produk diperbarui", product: result.rows[0] });
+    res.json({ message: "Product updated", product: result.rows[0] });
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ message: "SKU produk sudah ada" });
+      return res.status(409).json({ message: "Product SKU already exists" });
     }
     if (error.code === "23503") {
-      return res.status(400).json({ message: "Kategori tidak ditemukan" });
+      return res.status(400).json({ message: "Category not found" });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Hapus produk (admin)
+// Delete product (admin)
 app.delete("/products/:id", authenticate, adminOnly, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const result = await pool.query(
@@ -687,24 +687,24 @@ app.delete("/products/:id", authenticate, adminOnly, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Produk tidak ditemukan" });
+      return res.status(404).json({ message: "Product not found" });
     }
 
-    res.json({ message: "Produk dihapus" });
+    res.json({ message: "Product deleted" });
   } catch (error) {
     if (error.code === "23503") {
       return res.status(409).json({
-        message: "Produk tidak bisa dihapus karena sudah ada di pesanan",
+        message: "Product cannot be deleted because it is already in an order",
       });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
 /* ======================= ORDERS ======================= */
 
-// Membuat nomor pesanan unik, contoh: ORD-20261009-AB12CD
+// Generate a unique order number, e.g. ORD-20261009-AB12CD
 function generateOrderNumber() {
   const d = new Date();
   const ymd =
@@ -715,7 +715,7 @@ function generateOrderNumber() {
   return `ORD-${ymd}-${rand}`;
 }
 
-// Daftar pesanan: customer lihat miliknya sendiri, admin lihat semua
+// List orders: customers see their own, admins see all
 app.get("/orders", authenticate, async (req, res) => {
   try {
     const isAdmin = req.user.role === "admin";
@@ -735,16 +735,16 @@ app.get("/orders", authenticate, async (req, res) => {
     res.json({ orders: result.rows });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Detail pesanan beserta item-nya
+// Order detail including its items
 app.get("/orders/:id", authenticate, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const orderResult = await pool.query(
@@ -759,17 +759,17 @@ app.get("/orders/:id", authenticate, async (req, res) => {
     );
 
     if (!orderResult.rowCount) {
-      return res.status(404).json({ message: "Pesanan tidak ditemukan" });
+      return res.status(404).json({ message: "Order not found" });
     }
 
     const order = orderResult.rows[0];
 
-    // Customer hanya boleh melihat pesanannya sendiri
+    // Customers may only view their own order
     if (
       req.user.role !== "admin" &&
       Number(order.user_id) !== Number(req.user.id)
     ) {
-      return res.status(403).json({ message: "Akses ditolak" });
+      return res.status(403).json({ message: "Access denied" });
     }
 
     const itemsResult = await pool.query(
@@ -784,20 +784,20 @@ app.get("/orders/:id", authenticate, async (req, res) => {
     res.json({ order: { ...order, items: itemsResult.rows } });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
-// Buat pesanan dari daftar item; stok dicek & dikurangi dalam transaksi
+// Create an order from a list of items; stock is checked and decremented in a transaction
 app.post("/orders", authenticate, async (req, res) => {
   const body = req.body ?? {};
   const { items, shipping } = body;
 
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ message: "Pesanan harus memiliki minimal 1 item" });
+    return res.status(400).json({ message: "An order must have at least 1 item" });
   }
 
-  // Validasi data pengiriman (wajib sesuai skema)
+  // Validate shipping data (required by the schema)
   const ship = shipping ?? {};
   const requiredShip = {
     recipient_name: ship.recipient_name,
@@ -809,31 +809,31 @@ app.post("/orders", authenticate, async (req, res) => {
   };
   for (const [key, val] of Object.entries(requiredShip)) {
     if (typeof val !== "string" || !val.trim()) {
-      return res.status(400).json({ message: `Data pengiriman '${key}' wajib diisi` });
+      return res.status(400).json({ message: `Shipping field '${key}' is required` });
     }
   }
 
   const shippingCost = Number(ship.shipping_cost ?? 0);
   const discount = Number(ship.discount ?? 0);
   if (!Number.isFinite(shippingCost) || shippingCost < 0) {
-    return res.status(400).json({ message: "shipping_cost tidak valid" });
+    return res.status(400).json({ message: "Invalid shipping_cost" });
   }
   if (!Number.isFinite(discount) || discount < 0) {
-    return res.status(400).json({ message: "discount tidak valid" });
+    return res.status(400).json({ message: "Invalid discount" });
   }
   const customerNote =
     typeof ship.customer_note === "string" ? ship.customer_note : null;
 
-  // Validasi item dan gabungkan kuantitas produk yang sama
+  // Validate items and merge quantities for the same product
   const quantityByProduct = new Map();
   for (const item of items) {
     const productId = Number(item?.product_id);
     const quantity = Number(item?.quantity);
     if (!Number.isInteger(productId) || productId < 1) {
-      return res.status(400).json({ message: "product_id tidak valid" });
+      return res.status(400).json({ message: "Invalid product_id" });
     }
     if (!Number.isInteger(quantity) || quantity < 1) {
-      return res.status(400).json({ message: "quantity tidak valid" });
+      return res.status(400).json({ message: "Invalid quantity" });
     }
     quantityByProduct.set(
       productId,
@@ -845,7 +845,7 @@ app.post("/orders", authenticate, async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Kunci baris produk agar stok konsisten saat permintaan bersamaan
+    // Lock product rows so stock stays consistent under concurrent requests
     const productIds = [...quantityByProduct.keys()];
     const productResult = await client.query(
       `SELECT id, sku, name, price, stock, is_active
@@ -857,7 +857,7 @@ app.post("/orders", authenticate, async (req, res) => {
 
     if (productResult.rowCount !== productIds.length) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ message: "Ada produk yang tidak ditemukan" });
+      return res.status(400).json({ message: "Some products were not found" });
     }
 
     let subtotal = 0;
@@ -867,13 +867,13 @@ app.post("/orders", authenticate, async (req, res) => {
       if (!product.is_active) {
         await client.query("ROLLBACK");
         return res.status(409).json({
-          message: `Produk "${product.name}" tidak tersedia`,
+          message: `Product "${product.name}" is not available`,
         });
       }
       if (product.stock < quantity) {
         await client.query("ROLLBACK");
         return res.status(409).json({
-          message: `Stok tidak cukup untuk produk "${product.name}"`,
+          message: `Insufficient stock for product "${product.name}"`,
         });
       }
       const unitPrice = Number(product.price);
@@ -892,7 +892,7 @@ app.post("/orders", authenticate, async (req, res) => {
     const total = subtotal + shippingCost - discount;
     if (total < 0) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ message: "Total pesanan tidak boleh negatif" });
+      return res.status(400).json({ message: "Order total cannot be negative" });
     }
 
     const orderResult = await client.query(
@@ -953,22 +953,22 @@ app.post("/orders", authenticate, async (req, res) => {
     await client.query("COMMIT");
 
     res.status(201).json({
-      message: "Pesanan dibuat",
+      message: "Order created",
       order: { ...order, items: createdItems },
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     if (error.code === "23505") {
-      return res.status(409).json({ message: "Nomor pesanan bentrok, coba lagi" });
+      return res.status(409).json({ message: "Order number conflict, please try again" });
     }
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   } finally {
     client.release();
   }
 });
 
-// Perbarui status pesanan (admin)
+// Update order status (admin)
 app.patch("/orders/:id/status", authenticate, adminOnly, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -976,11 +976,11 @@ app.patch("/orders/:id/status", authenticate, adminOnly, async (req, res) => {
     const allowed = ["pending", "paid", "shipped", "completed", "cancelled"];
 
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
     if (!allowed.includes(status)) {
       return res.status(400).json({
-        message: `Status harus salah satu dari: ${allowed.join(", ")}`,
+        message: `Status must be one of: ${allowed.join(", ")}`,
       });
     }
 
@@ -991,16 +991,16 @@ app.patch("/orders/:id/status", authenticate, adminOnly, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(404).json({ message: "Pesanan tidak ditemukan" });
+      return res.status(404).json({ message: "Order not found" });
     }
 
-    res.json({ message: "Status pesanan diperbarui", order: result.rows[0] });
+    res.json({ message: "Order status updated", order: result.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Terjadi kesalahan pada server" });
+    res.status(500).json({ message: "A server error occurred" });
   }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API berjalan di port ${PORT}`);
+  console.log(`API running on port ${PORT}`);
 });
