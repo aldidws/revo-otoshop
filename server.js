@@ -76,6 +76,17 @@ app.get("/", (req, res) => {
   res.json({ message: "Auth API is running" });
 });
 
+// About endpoint (public): basic service info
+app.get("/about", (req, res) => {
+  res.json({
+    name: "Revo OtoShop Auth API",
+    description:
+      "Authentication and store API for Revo OtoShop (users, categories, products, orders).",
+    version: require("./package.json").version,
+    environment: process.env.NODE_ENV || "development",
+  });
+});
+
 // REGISTER: every new sign-up becomes a customer
 app.post("/register", async (req, res) => {
   try {
