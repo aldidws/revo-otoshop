@@ -595,9 +595,26 @@ app.get("/products", async (req, res) => {
       `SELECT p.id, p.sku, p.name, p.brand, p.description, p.price, p.stock,
               p.image_url, p.is_featured, p.is_active,
               p.category_id, c.name AS category_name,
-              p.created_at, p.updated_at
+              p.created_at, p.updated_at,
+              f.fitments
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           json_agg(
+             json_build_object(
+               'brand', pf.brand,
+               'series', pf.series,
+               'model', pf.model,
+               'engine', pf.engine
+             )
+             ORDER BY pf.id
+           ),
+           '[]'::json
+         ) AS fitments
+         FROM product_fitments pf
+         WHERE pf.product_id = p.id
+       ) f ON TRUE
        ${where}
        ORDER BY p.created_at DESC`,
       params,
@@ -622,9 +639,26 @@ app.get("/products/:id", async (req, res) => {
       `SELECT p.id, p.sku, p.name, p.brand, p.description, p.price, p.stock,
               p.image_url, p.is_featured, p.is_active,
               p.category_id, c.name AS category_name,
-              p.created_at, p.updated_at
+              p.created_at, p.updated_at,
+              f.fitments
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           json_agg(
+             json_build_object(
+               'brand', pf.brand,
+               'series', pf.series,
+               'model', pf.model,
+               'engine', pf.engine
+             )
+             ORDER BY pf.id
+           ),
+           '[]'::json
+         ) AS fitments
+         FROM product_fitments pf
+         WHERE pf.product_id = p.id
+       ) f ON TRUE
        WHERE p.id = $1`,
       [id],
     );
