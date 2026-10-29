@@ -803,35 +803,116 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
     const { error, value } = validateProduct(req.body);
     if (error) return res.status(400).json({ message: error });
 
-    const result = await pool.query(
-      `UPDATE products
-       SET sku = $1, name = $2, brand = $3, description = $4, price = $5,
-           stock = $6, image_url = $7, is_featured = $8, is_active = $9,
-           category_id = $10, updated_at = now()
-       WHERE id = $11
-       RETURNING id, sku, name, brand, description, price, stock,
-                 image_url, is_featured, is_active, category_id,
-                 created_at, updated_at`,
-      [
-        value.sku,
-        value.name,
-        value.brand,
-        value.description,
-        value.price,
-        value.stock,
-        value.image_url,
-        value.is_featured,
-        value.is_active,
-        value.category_id,
-        id,
-      ],
-    );
-
-    if (!result.rowCount) {
-      return res.status(404).json({ message: "Product not found" });
+    // Validate fitments if provided
+    const rawFitments = req.body?.fitments;
+    if (rawFitments !== undefined) {
+      if (!Array.isArray(rawFitments)) {
+        return res.status(400).json({ message: "fitments must be an array" });
+      }
+      for (const f of rawFitments) {
+        if (typeof f?.brand !== "string" || !f.brand.trim()) {
+          return res
+            .status(400)
+            .json({ message: "Each fitment must have a non-empty brand" });
+        }
+      }
     }
 
-    res.json({ message: "Product updated", product: result.rows[0] });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const result = await client.query(
+        `UPDATE products
+         SET sku = $1, name = $2, brand = $3, description = $4, price = $5,
+             stock = $6, image_url = $7, is_featured = $8, is_active = $9,
+             category_id = $10, updated_at = now()
+         WHERE id = $11
+         RETURNING id, sku, name, brand, description, price, stock,
+                   image_url, is_featured, is_active, category_id,
+                   created_at, updated_at`,
+        [
+          value.sku,
+          value.name,
+          value.brand,
+          value.description,
+          value.price,
+          value.stock,
+          value.image_url,
+          value.is_featured,
+          value.is_active,
+          value.category_id,
+          id,
+        ],
+      );
+
+      if (!result.rowCount) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      // Update fitments only when the field is explicitly included in the body
+      if (rawFitments !== undefined) {
+        await client.query(
+          `DELETE FROM product_fitments WHERE product_id = $1`,
+          [id],
+        );
+
+        if (rawFitments.length > 0) {
+          // Build a multi-row INSERT with unnest for safety (no dynamic SQL)
+          const brands = rawFitments.map((f) => f.brand.trim());
+          const series = rawFitments.map((f) => f.series?.trim() ?? null);
+          const models = rawFitments.map((f) => f.model?.trim() ?? null);
+          const engines = rawFitments.map((f) => f.engine?.trim() ?? null);
+
+          await client.query(
+            `INSERT INTO product_fitments (product_id, brand, series, model, engine)
+             SELECT $1, brand, series, model, engine
+             FROM unnest($2::text[], $3::text[], $4::text[], $5::text[])
+               AS t(brand, series, model, engine)`,
+            [id, brands, series, models, engines],
+          );
+        }
+      }
+
+      await client.query("COMMIT");
+
+      // Re-fetch with fitments so the response is always consistent
+      const updated = await pool.query(
+        `SELECT p.id, p.sku, p.name, p.brand, p.description, p.price, p.stock,
+                p.image_url, p.is_featured, p.is_active,
+                p.category_id, c.name AS category_name,
+                p.created_at, p.updated_at,
+                f.fitments
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(
+             json_agg(
+               json_build_object(
+                 'brand', pf.brand,
+                 'series', pf.series,
+                 'model', pf.model,
+                 'engine', pf.engine
+               )
+               ORDER BY pf.id
+             ),
+             '[]'::json
+           ) AS fitments
+           FROM product_fitments pf
+           WHERE pf.product_id = p.id
+         ) f ON TRUE
+         WHERE p.id = $1`,
+        [id],
+      );
+
+      res.json({ message: "Product updated", product: updated.rows[0] });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ message: "Product SKU already exists" });
