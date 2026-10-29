@@ -777,6 +777,21 @@ app.post("/products", authenticate, adminOnly, async (req, res) => {
     const { error, value } = validateProduct(req.body);
     if (error) return res.status(400).json({ message: error });
 
+    // Validate fitments if provided
+    const rawFitments = req.body?.fitments;
+    if (rawFitments !== undefined) {
+      if (!Array.isArray(rawFitments)) {
+        return res.status(400).json({ message: "fitments must be an array" });
+      }
+      for (const f of rawFitments) {
+        if (typeof f?.brand !== "string" || !f.brand.trim()) {
+          return res
+            .status(400)
+            .json({ message: "Each fitment must have a non-empty brand" });
+        }
+      }
+    }
+
     // Resolve category_name → category_id when supplied as a name string
     if (value.category_name_lookup) {
       const catResult = await pool.query(
@@ -791,31 +806,88 @@ app.post("/products", authenticate, adminOnly, async (req, res) => {
       value.category_id = catResult.rows[0].id;
     }
 
-    const result = await pool.query(
-      `INSERT INTO products
-         (sku, name, brand, description, price, stock,
-          image_url, is_featured, is_active, category_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id, sku, name, brand, description, price, stock,
-                 image_url, is_featured, is_active, category_id,
-                 created_at, updated_at`,
-      [
-        value.sku,
-        value.name,
-        value.brand,
-        value.description,
-        value.price,
-        value.stock,
-        value.image_url ?? null,
-        value.is_featured,
-        value.is_active,
-        value.category_id,
-      ],
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    res
-      .status(201)
-      .json({ message: "Product created", product: result.rows[0] });
+      const result = await client.query(
+        `INSERT INTO products
+           (sku, name, brand, description, price, stock,
+            image_url, is_featured, is_active, category_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, sku, name, brand, description, price, stock,
+                   image_url, is_featured, is_active, category_id,
+                   created_at, updated_at`,
+        [
+          value.sku,
+          value.name,
+          value.brand,
+          value.description,
+          value.price,
+          value.stock,
+          value.image_url ?? null,
+          value.is_featured,
+          value.is_active,
+          value.category_id,
+        ],
+      );
+
+      const newId = result.rows[0].id;
+
+      // Insert fitments if provided
+      if (rawFitments && rawFitments.length > 0) {
+        const brands  = rawFitments.map((f) => f.brand.trim());
+        const series  = rawFitments.map((f) => f.series?.trim()  ?? null);
+        const models  = rawFitments.map((f) => f.model?.trim()   ?? null);
+        const engines = rawFitments.map((f) => f.engine?.trim()  ?? null);
+
+        await client.query(
+          `INSERT INTO product_fitments (product_id, brand, series, model, engine)
+           SELECT $1, brand, series, model, engine
+           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[])
+             AS t(brand, series, model, engine)`,
+          [newId, brands, series, models, engines],
+        );
+      }
+
+      await client.query("COMMIT");
+
+      // Re-fetch with category_name and fitments for a consistent response
+      const created = await pool.query(
+        `SELECT p.id, p.sku, p.name, p.brand, p.description, p.price, p.stock,
+                p.image_url, p.is_featured, p.is_active,
+                p.category_id, c.name AS category_name,
+                p.created_at, p.updated_at,
+                f.fitments
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(
+             json_agg(
+               json_build_object(
+                 'brand', pf.brand,
+                 'series', pf.series,
+                 'model', pf.model,
+                 'engine', pf.engine
+               )
+               ORDER BY pf.id
+             ),
+             '[]'::json
+           ) AS fitments
+           FROM product_fitments pf
+           WHERE pf.product_id = p.id
+         ) f ON TRUE
+         WHERE p.id = $1`,
+        [newId],
+      );
+
+      res.status(201).json({ message: "Product created", product: created.rows[0] });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ message: "Product SKU already exists" });
