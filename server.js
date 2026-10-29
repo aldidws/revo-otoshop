@@ -674,7 +674,9 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-// Validate product payload
+// Validate product payload.
+// Accepts category as either category_id (number) or category_name (string).
+// image_url is preserved as-is when undefined (PUT handler fills it from DB).
 function validateProduct(body) {
   const {
     sku,
@@ -687,6 +689,7 @@ function validateProduct(body) {
     is_featured,
     is_active,
     category_id,
+    category_name,
   } = body ?? {};
 
   if (typeof sku !== "string" || !sku.trim() || sku.trim().length > 100) {
@@ -724,9 +727,24 @@ function validateProduct(body) {
   if (is_active !== undefined && typeof is_active !== "boolean") {
     return { error: "is_active must be a boolean" };
   }
-  // category_id may be a number or a numeric string (DB id is bigint)
+
+  // Category can be supplied as category_id (number) or category_name (string).
+  // category_name takes precedence when both are present.
+  // An empty string / null / undefined for both → category_id stays null (clear).
   let categoryId = null;
-  if (category_id !== undefined && category_id !== null && category_id !== "") {
+  let categoryNameLookup = null; // non-null triggers a DB lookup in PUT/POST handler
+
+  const nameVal =
+    typeof category_name === "string" ? category_name.trim() : null;
+
+  if (nameVal) {
+    // Will be resolved to an id by the handler
+    categoryNameLookup = nameVal;
+  } else if (
+    category_id !== undefined &&
+    category_id !== null &&
+    category_id !== ""
+  ) {
     categoryId = Number(category_id);
     if (!Number.isInteger(categoryId) || categoryId < 1) {
       return { error: "Invalid category_id" };
@@ -741,10 +759,14 @@ function validateProduct(body) {
       description: typeof description === "string" ? description : null,
       price,
       stock: Number.isInteger(stock) ? stock : 0,
-      image_url: typeof image_url === "string" ? image_url : null,
+      // undefined means "not supplied" — PUT handler will keep existing value
+      image_url: image_url !== undefined
+        ? (typeof image_url === "string" ? image_url : null)
+        : undefined,
       is_featured: typeof is_featured === "boolean" ? is_featured : false,
       is_active: typeof is_active === "boolean" ? is_active : true,
       category_id: categoryId,
+      category_name_lookup: categoryNameLookup,
     },
   };
 }
@@ -754,6 +776,20 @@ app.post("/products", authenticate, adminOnly, async (req, res) => {
   try {
     const { error, value } = validateProduct(req.body);
     if (error) return res.status(400).json({ message: error });
+
+    // Resolve category_name → category_id when supplied as a name string
+    if (value.category_name_lookup) {
+      const catResult = await pool.query(
+        `SELECT id FROM categories WHERE name = $1 AND is_active = true LIMIT 1`,
+        [value.category_name_lookup],
+      );
+      if (!catResult.rowCount) {
+        return res
+          .status(400)
+          .json({ message: `Category "${value.category_name_lookup}" not found` });
+      }
+      value.category_id = catResult.rows[0].id;
+    }
 
     const result = await pool.query(
       `INSERT INTO products
@@ -770,7 +806,7 @@ app.post("/products", authenticate, adminOnly, async (req, res) => {
         value.description,
         value.price,
         value.stock,
-        value.image_url,
+        value.image_url ?? null,
         value.is_featured,
         value.is_active,
         value.category_id,
@@ -803,6 +839,20 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
     const { error, value } = validateProduct(req.body);
     if (error) return res.status(400).json({ message: error });
 
+    // Resolve category_name → category_id when supplied as a name string
+    if (value.category_name_lookup) {
+      const catResult = await pool.query(
+        `SELECT id FROM categories WHERE name = $1 AND is_active = true LIMIT 1`,
+        [value.category_name_lookup],
+      );
+      if (!catResult.rowCount) {
+        return res
+          .status(400)
+          .json({ message: `Category "${value.category_name_lookup}" not found` });
+      }
+      value.category_id = catResult.rows[0].id;
+    }
+
     // Validate fitments if provided
     const rawFitments = req.body?.fitments;
     if (rawFitments !== undefined) {
@@ -822,6 +872,20 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
     try {
       await client.query("BEGIN");
 
+      // If image_url was not sent in the body, preserve the existing value from DB
+      let imageUrl = value.image_url; // may be undefined, string, or null
+      if (imageUrl === undefined) {
+        const existing = await client.query(
+          `SELECT image_url FROM products WHERE id = $1`,
+          [id],
+        );
+        if (!existing.rowCount) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({ message: "Product not found" });
+        }
+        imageUrl = existing.rows[0].image_url;
+      }
+
       const result = await client.query(
         `UPDATE products
          SET sku = $1, name = $2, brand = $3, description = $4, price = $5,
@@ -838,7 +902,7 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
           value.description,
           value.price,
           value.stock,
-          value.image_url,
+          imageUrl ?? null,
           value.is_featured,
           value.is_active,
           value.category_id,
@@ -877,7 +941,7 @@ app.put("/products/:id", authenticate, adminOnly, async (req, res) => {
 
       await client.query("COMMIT");
 
-      // Re-fetch with fitments so the response is always consistent
+      // Re-fetch with category_name and fitments so the response is always consistent
       const updated = await pool.query(
         `SELECT p.id, p.sku, p.name, p.brand, p.description, p.price, p.stock,
                 p.image_url, p.is_featured, p.is_active,
